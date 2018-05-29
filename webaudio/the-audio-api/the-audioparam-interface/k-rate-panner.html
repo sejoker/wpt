@@ -30,7 +30,7 @@
         audit.define('Panner k-rate ' + paramProperty.name, (task, should) => {
           // Arbitrary sample rate and duration.
           let sampleRate = 8000;
-          let testDuration = 1;
+          let testDuration = 5 * 128 / sampleRate;
           let context = new OfflineAudioContext({
             numberOfChannels: 3,
             sampleRate: sampleRate,
@@ -38,6 +38,8 @@
           });
 
           doTest(context, should, {
+            sourceNodeName: 'ConstantSourceNode',
+            verifyPieceWiseConstant: true,
             nodeName: 'PannerNode',
             // Make the source directional so orientation matters, and set some
             // defaults for the position and orientation so that we're not on an
