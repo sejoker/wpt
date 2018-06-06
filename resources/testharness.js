@@ -1062,6 +1062,7 @@ policies and contribution forms [3].
      */
 
     function assert_true(actual, description) {
+        tests.tests_actual_results.push(actual);
         assert(
             actual === true,
             "assert_true",
@@ -1073,6 +1074,7 @@ policies and contribution forms [3].
     expose(assert_true, "assert_true");
 
     function assert_false(actual, description) {
+        tests.tests_actual_results.push(actual);
         assert(
             actual === false,
             "assert_false",
@@ -1096,6 +1098,7 @@ policies and contribution forms [3].
     }
 
     function assert_equals(actual, expected, description) {
+        tests.tests_actual_results.push(actual);
         /*
           * Test if two primitives are equal or two objects
           * are the same object
@@ -1125,6 +1128,7 @@ policies and contribution forms [3].
     expose(assert_equals, "assert_equals");
 
     function assert_not_equals(actual, expected, description) {
+        tests.tests_actual_results.push(actual);
         /*
           * Test if two primitives are unequal or two objects
           * are different objects
@@ -1140,6 +1144,7 @@ policies and contribution forms [3].
     expose(assert_not_equals, "assert_not_equals");
 
     function assert_in_array(actual, expected, description) {
+        tests.tests_actual_results.push(actual);
         assert(
             expected.indexOf(actual) != -1,
             "assert_in_array",
@@ -1151,6 +1156,7 @@ policies and contribution forms [3].
     expose(assert_in_array, "assert_in_array");
 
     function assert_object_equals(actual, expected, description) {
+        tests.tests_actual_results.push(actual);
         //This needs to be improved a great deal
         function check_equal(actual, expected, stack) {
             stack.push(actual);
@@ -1195,6 +1201,7 @@ policies and contribution forms [3].
     expose(assert_object_equals, "assert_object_equals");
 
     function assert_array_equals(actual, expected, description) {
+        tests.tests_actual_results.push(actual);
         assert(
             typeof actual === "object" && actual !== null && "length" in actual,
             "assert_array_equals",
@@ -1241,6 +1248,7 @@ policies and contribution forms [3].
         epsilon,
         description
     ) {
+        tests.tests_actual_results.push(actual);
         /*
          * Test if two primitive arrays are equal withing +/- epsilon
          */
@@ -1285,6 +1293,7 @@ policies and contribution forms [3].
     expose(assert_array_approx_equals, "assert_array_approx_equals");
 
     function assert_approx_equals(actual, expected, epsilon, description) {
+        tests.tests_actual_results.push(actual);
         /*
          * Test if two primitive numbers are equal withing +/- epsilon
          */
@@ -1307,6 +1316,7 @@ policies and contribution forms [3].
     expose(assert_approx_equals, "assert_approx_equals");
 
     function assert_less_than(actual, expected, description) {
+        tests.tests_actual_results.push(actual);
         /*
          * Test if a primitive number is less than another
          */
@@ -1329,6 +1339,7 @@ policies and contribution forms [3].
     expose(assert_less_than, "assert_less_than");
 
     function assert_greater_than(actual, expected, description) {
+        tests.tests_actual_results.push(actual);
         /*
          * Test if a primitive number is greater than another
          */
@@ -1351,6 +1362,7 @@ policies and contribution forms [3].
     expose(assert_greater_than, "assert_greater_than");
 
     function assert_between_exclusive(actual, lower, upper, description) {
+        tests.tests_actual_results.push(actual);
         /*
          * Test if a primitive number is between two others
          */
@@ -1374,6 +1386,7 @@ policies and contribution forms [3].
     expose(assert_between_exclusive, "assert_between_exclusive");
 
     function assert_less_than_equal(actual, expected, description) {
+        tests.tests_actual_results.push(actual);
         /*
          * Test if a primitive number is less than or equal to another
          */
@@ -1396,6 +1409,7 @@ policies and contribution forms [3].
     expose(assert_less_than_equal, "assert_less_than_equal");
 
     function assert_greater_than_equal(actual, expected, description) {
+        tests.tests_actual_results.push(actual);
         /*
          * Test if a primitive number is greater than or equal to another
          */
@@ -1418,6 +1432,7 @@ policies and contribution forms [3].
     expose(assert_greater_than_equal, "assert_greater_than_equal");
 
     function assert_between_inclusive(actual, lower, upper, description) {
+        tests.tests_actual_results.push(actual);
         /*
          * Test if a primitive number is between to two others or equal to either of them
          */
@@ -1441,6 +1456,7 @@ policies and contribution forms [3].
     expose(assert_between_inclusive, "assert_between_inclusive");
 
     function assert_regexp_match(actual, expected, description) {
+        tests.tests_actual_results.push(actual);
         /*
          * Test if a string (actual) matches a regexp (expected)
          */
@@ -1455,6 +1471,7 @@ policies and contribution forms [3].
     expose(assert_regexp_match, "assert_regexp_match");
 
     function assert_class_string(object, class_string, description) {
+        tests.tests_actual_results.push(object);
         assert_equals(
             {}.toString.call(object),
             "[object " + class_string + "]",
@@ -1465,6 +1482,7 @@ policies and contribution forms [3].
 
     function _assert_own_property(name) {
         return function(object, property_name, description) {
+            tests.tests_actual_results.push(object);
             assert(
                 object.hasOwnProperty(property_name),
                 name,
@@ -1490,6 +1508,7 @@ policies and contribution forms [3].
 
     function _assert_inherits(name) {
         return function(object, property_name, description) {
+            tests.tests_actual_results.push(object);
             assert(
                 typeof object === "object" || typeof object === "function",
                 name,
@@ -1525,6 +1544,7 @@ policies and contribution forms [3].
     expose(_assert_inherits("assert_idl_attribute"), "assert_idl_attribute");
 
     function assert_readonly(object, property_name, description) {
+        tests.tests_actual_results.push(object);
         var initial_value = object[property_name];
         try {
             //Note that this can have side effects in the case where
@@ -1723,6 +1743,7 @@ policies and contribution forms [3].
     expose(assert_unreached, "assert_unreached");
 
     function assert_any(assert_func, actual, expected_array) {
+        tests.tests_actual_results.push(actual);
         var args = [].slice.call(arguments, 3);
         var errors = [];
         var passed = false;
@@ -2239,6 +2260,7 @@ policies and contribution forms [3].
         this.test_state_callbacks = [];
         this.test_done_callbacks = [];
         this.all_done_callbacks = [];
+        this.tests_actual_results = [];
 
         this.pending_remotes = [];
 
@@ -2408,6 +2430,10 @@ policies and contribution forms [3].
                 x.phase = x.phases.COMPLETE;
             }
         });
+        console.log(
+            `Actual results from all tests:`,
+            JSON.stringify(this.tests_actual_results)
+        );
         this.notify_complete();
     };
 
