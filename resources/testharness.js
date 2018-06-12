@@ -205,25 +205,26 @@ policies and contribution forms [3].
     WindowTestEnvironment.prototype.on_tests_ready = function() {
         var output = new Output();
         this.output_handler = output;
-
         var this_obj = this;
-
         add_start_callback(function(properties) {
             this_obj.output_handler.init(properties);
         });
-
         add_test_state_callback(function(test) {
             this_obj.output_handler.show_status();
         });
-
         add_result_callback(function(test) {
             this_obj.output_handler.show_status();
         });
-
         add_completion_callback(function(tests, harness_status) {
             this_obj.output_handler.show_results(tests, harness_status);
         });
         this.setup_messages(settings.message_events);
+        add_completion_callback(function() {
+            console.log(
+                `All tests actual values:`,
+                format_value(tests.tests_actual_results)
+            );
+        });
     };
 
     WindowTestEnvironment.prototype.setup_messages = function(new_events) {
@@ -282,318 +283,15 @@ policies and contribution forms [3].
         return settings.harness_timeout.normal;
     };
 
-    /*
-     * Base TestEnvironment implementation for a generic web worker.
-     *
-     * Workers accumulate test results. One or more clients can connect and
-     * retrieve results from a worker at any time.
-     *
-     * WorkerTestEnvironment supports communicating with a client via a
-     * MessagePort.  The mechanism for determining the appropriate MessagePort
-     * for communicating with a client depends on the type of worker and is
-     * implemented by the various specializations of WorkerTestEnvironment
-     * below.
-     *
-     * A client document using testharness can use fetch_tests_from_worker() to
-     * retrieve results from a worker. See apisample16.html.
-     */
-    function WorkerTestEnvironment() {
-        this.name_counter = 0;
-        this.all_loaded = true;
-        this.message_list = [];
-        this.message_ports = [];
-    }
-
-    WorkerTestEnvironment.prototype._dispatch = function(message) {
-        this.message_list.push(message);
-        for (var i = 0; i < this.message_ports.length; ++i) {
-            this.message_ports[i].postMessage(message);
-        }
-    };
-
-    // The only requirement is that port has a postMessage() method. It doesn't
-    // have to be an instance of a MessagePort, and often isn't.
-    WorkerTestEnvironment.prototype._add_message_port = function(port) {
-        this.message_ports.push(port);
-        for (var i = 0; i < this.message_list.length; ++i) {
-            port.postMessage(this.message_list[i]);
-        }
-    };
-
-    WorkerTestEnvironment.prototype.next_default_test_name = function() {
-        var suffix = this.name_counter > 0 ? " " + this.name_counter : "";
-        this.name_counter++;
-        return "Untitled" + suffix;
-    };
-
-    WorkerTestEnvironment.prototype.on_new_harness_properties = function() {};
-
-    WorkerTestEnvironment.prototype.on_tests_ready = function() {
-        var this_obj = this;
-        add_start_callback(function(properties) {
-            this_obj._dispatch({
-                type: "start",
-                properties: properties
-            });
-        });
-        add_test_state_callback(function(test) {
-            this_obj._dispatch({
-                type: "test_state",
-                test: test.structured_clone()
-            });
-        });
-        add_result_callback(function(test) {
-            this_obj._dispatch({
-                type: "result",
-                test: test.structured_clone()
-            });
-        });
-        add_completion_callback(function(tests, harness_status) {
-            this_obj._dispatch({
-                type: "complete",
-                tests: map(tests, function(test) {
-                    return test.structured_clone();
-                }),
-                status: harness_status.structured_clone()
-            });
-        });
-    };
-
-    WorkerTestEnvironment.prototype.add_on_loaded_callback = function() {};
-
-    WorkerTestEnvironment.prototype.test_timeout = function() {
-        // Tests running in a worker don't have a default timeout. I.e. all
-        // worker tests behave as if settings.explicit_timeout is true.
-        return null;
-    };
-
-    /*
-     * Dedicated web workers.
-     * https://html.spec.whatwg.org/multipage/workers.html#dedicatedworkerglobalscope
-     *
-     * This class is used as the test_environment when testharness is running
-     * inside a dedicated worker.
-     */
-    function DedicatedWorkerTestEnvironment() {
-        WorkerTestEnvironment.call(this);
-        // self is an instance of DedicatedWorkerGlobalScope which exposes
-        // a postMessage() method for communicating via the message channel
-        // established when the worker is created.
-        this._add_message_port(self);
-    }
-    DedicatedWorkerTestEnvironment.prototype = Object.create(
-        WorkerTestEnvironment.prototype
-    );
-
-    DedicatedWorkerTestEnvironment.prototype.on_tests_ready = function() {
-        WorkerTestEnvironment.prototype.on_tests_ready.call(this);
-        // In the absence of an onload notification, we a require dedicated
-        // workers to explicitly signal when the tests are done.
-        tests.wait_for_finish = true;
-    };
-
-    /*
-     * Shared web workers.
-     * https://html.spec.whatwg.org/multipage/workers.html#sharedworkerglobalscope
-     *
-     * This class is used as the test_environment when testharness is running
-     * inside a shared web worker.
-     */
-    function SharedWorkerTestEnvironment() {
-        WorkerTestEnvironment.call(this);
-        var this_obj = this;
-        // Shared workers receive message ports via the 'onconnect' event for
-        // each connection.
-        self.addEventListener(
-            "connect",
-            function(message_event) {
-                this_obj._add_message_port(message_event.source);
-            },
-            false
-        );
-    }
-    SharedWorkerTestEnvironment.prototype = Object.create(
-        WorkerTestEnvironment.prototype
-    );
-
-    SharedWorkerTestEnvironment.prototype.on_tests_ready = function() {
-        WorkerTestEnvironment.prototype.on_tests_ready.call(this);
-        // In the absence of an onload notification, we a require shared
-        // workers to explicitly signal when the tests are done.
-        tests.wait_for_finish = true;
-    };
-
-    /*
-     * Service workers.
-     * http://www.w3.org/TR/service-workers/
-     *
-     * This class is used as the test_environment when testharness is running
-     * inside a service worker.
-     */
-    function ServiceWorkerTestEnvironment() {
-        WorkerTestEnvironment.call(this);
-        this.all_loaded = false;
-        this.on_loaded_callback = null;
-        var this_obj = this;
-        self.addEventListener(
-            "message",
-            function(event) {
-                if (
-                    event.data &&
-                    event.data.type &&
-                    event.data.type === "connect"
-                ) {
-                    if (event.ports && event.ports[0]) {
-                        // If a MessageChannel was passed, then use it to
-                        // send results back to the main window.  This
-                        // allows the tests to work even if the browser
-                        // does not fully support MessageEvent.source in
-                        // ServiceWorkers yet.
-                        this_obj._add_message_port(event.ports[0]);
-                        event.ports[0].start();
-                    } else {
-                        // If there is no MessageChannel, then attempt to
-                        // use the MessageEvent.source to send results
-                        // back to the main window.
-                        this_obj._add_message_port(event.source);
-                    }
-                }
-            },
-            false
-        );
-
-        // The oninstall event is received after the service worker script and
-        // all imported scripts have been fetched and executed. It's the
-        // equivalent of an onload event for a document. All tests should have
-        // been added by the time this event is received, thus it's not
-        // necessary to wait until the onactivate event. However, tests for
-        // installed service workers need another event which is equivalent to
-        // the onload event because oninstall is fired only on installation. The
-        // onmessage event is used for that purpose since tests using
-        // testharness.js should ask the result to its service worker by
-        // PostMessage. If the onmessage event is triggered on the service
-        // worker's context, that means the worker's script has been evaluated.
-        on_event(self, "install", on_all_loaded);
-        on_event(self, "message", on_all_loaded);
-        function on_all_loaded() {
-            if (this_obj.all_loaded) return;
-            this_obj.all_loaded = true;
-            if (this_obj.on_loaded_callback) {
-                this_obj.on_loaded_callback();
-            }
-        }
-    }
-
-    ServiceWorkerTestEnvironment.prototype = Object.create(
-        WorkerTestEnvironment.prototype
-    );
-
-    ServiceWorkerTestEnvironment.prototype.add_on_loaded_callback = function(
-        callback
-    ) {
-        if (this.all_loaded) {
-            callback();
-        } else {
-            this.on_loaded_callback = callback;
-        }
-    };
-
-    /*
-     * JavaScript shells.
-     *
-     * This class is used as the test_environment when testharness is running
-     * inside a JavaScript shell.
-     */
-    function ShellTestEnvironment() {
-        this.name_counter = 0;
-        this.all_loaded = false;
-        this.on_loaded_callback = null;
-        Promise.resolve().then(
-            function() {
-                this.all_loaded = true;
-                if (this.on_loaded_callback) {
-                    this.on_loaded_callback();
-                }
-            }.bind(this)
-        );
-        this.message_list = [];
-        this.message_ports = [];
-    }
-
-    ShellTestEnvironment.prototype.next_default_test_name = function() {
-        var suffix = this.name_counter > 0 ? " " + this.name_counter : "";
-        this.name_counter++;
-        return "Untitled" + suffix;
-    };
-
-    ShellTestEnvironment.prototype.on_new_harness_properties = function() {};
-
-    ShellTestEnvironment.prototype.on_tests_ready = function() {};
-
-    ShellTestEnvironment.prototype.add_on_loaded_callback = function(callback) {
-        if (this.all_loaded) {
-            callback();
-        } else {
-            this.on_loaded_callback = callback;
-        }
-    };
-
-    ShellTestEnvironment.prototype.test_timeout = function() {
-        // Tests running in a shell don't have a default timeout, so behave as
-        // if settings.explicit_timeout is true.
-        return null;
-    };
-
     function create_test_environment() {
         if ("document" in global_scope) {
             return new WindowTestEnvironment();
-        }
-        if (
-            "DedicatedWorkerGlobalScope" in global_scope &&
-            global_scope instanceof DedicatedWorkerGlobalScope
-        ) {
-            return new DedicatedWorkerTestEnvironment();
-        }
-        if (
-            "SharedWorkerGlobalScope" in global_scope &&
-            global_scope instanceof SharedWorkerGlobalScope
-        ) {
-            return new SharedWorkerTestEnvironment();
-        }
-        if (
-            "ServiceWorkerGlobalScope" in global_scope &&
-            global_scope instanceof ServiceWorkerGlobalScope
-        ) {
-            return new ServiceWorkerTestEnvironment();
-        }
-        if (
-            "WorkerGlobalScope" in global_scope &&
-            global_scope instanceof WorkerGlobalScope
-        ) {
-            return new DedicatedWorkerTestEnvironment();
-        }
-
-        if (!("self" in global_scope)) {
-            return new ShellTestEnvironment();
         }
 
         throw new Error("Unsupported test environment");
     }
 
     var test_environment = create_test_environment();
-
-    function is_shared_worker(worker) {
-        return "SharedWorker" in global_scope && worker instanceof SharedWorker;
-    }
-
-    function is_service_worker(worker) {
-        // The worker object may be from another execution context,
-        // so do not use instanceof here.
-        return (
-            "ServiceWorker" in global_scope &&
-            Object.prototype.toString.call(worker) == "[object ServiceWorker]"
-        );
-    }
 
     /*
      * API functions
@@ -1248,7 +946,6 @@ policies and contribution forms [3].
         epsilon,
         description
     ) {
-        tests.tests_actual_results.push(actual);
         /*
          * Test if two primitive arrays are equal withing +/- epsilon
          */
@@ -1261,6 +958,7 @@ policies and contribution forms [3].
         );
 
         for (var i = 0; i < actual.length; i++) {
+            tests.tests_actual_results.push(actual[i]);
             assert(
                 actual.hasOwnProperty(i) === expected.hasOwnProperty(i),
                 "assert_array_approx_equals",
@@ -1471,7 +1169,7 @@ policies and contribution forms [3].
     expose(assert_regexp_match, "assert_regexp_match");
 
     function assert_class_string(object, class_string, description) {
-        tests.tests_actual_results.push(object);
+        tests.tests_actual_results.push({}.toString.call(object));
         assert_equals(
             {}.toString.call(object),
             "[object " + class_string + "]",
@@ -1508,7 +1206,7 @@ policies and contribution forms [3].
 
     function _assert_inherits(name) {
         return function(object, property_name, description) {
-            tests.tests_actual_results.push(object);
+            tests.tests_actual_results.push(object[property_name]);
             assert(
                 typeof object === "object" || typeof object === "function",
                 name,
@@ -1544,7 +1242,7 @@ policies and contribution forms [3].
     expose(_assert_inherits("assert_idl_attribute"), "assert_idl_attribute");
 
     function assert_readonly(object, property_name, description) {
-        tests.tests_actual_results.push(object);
+        tests.tests_actual_results.push(object[property_name]);
         var initial_value = object[property_name];
         try {
             //Note that this can have side effects in the case where
@@ -2430,10 +2128,6 @@ policies and contribution forms [3].
                 x.phase = x.phases.COMPLETE;
             }
         });
-        console.log(
-            `Actual results from all tests:`,
-            JSON.stringify(this.tests_actual_results)
-        );
         this.notify_complete();
     };
 
