@@ -41,7 +41,6 @@
   function WindowTestEnvironment() {
     this.name_counter = 0;
     this.window_cache = null;
-    this.output_handler = null;
     this.all_loaded = false;
     var this_obj = this;
     this.message_events = [];
@@ -170,21 +169,6 @@
   };
 
   WindowTestEnvironment.prototype.on_tests_ready = function() {
-    //var output = new Output();
-    // this.output_handler = output;
-    // var this_obj = this;
-    // add_start_callback(function(properties) {
-    //   this_obj.output_handler.init(properties);
-    // });
-    // add_test_state_callback(function(test) {
-    //   this_obj.output_handler.show_status();
-    // });
-    // add_result_callback(function(test) {
-    //   this_obj.output_handler.show_status();
-    // });
-    // add_completion_callback(function(tests, harness_status) {
-    //   this_obj.output_handler.show_results(tests, harness_status);
-    // });
     this.setup_messages(settings.message_events);
     add_completion_callback(function() {
       console.log(
@@ -222,7 +206,6 @@
   WindowTestEnvironment.prototype.on_new_harness_properties = function(
     properties
   ) {
-    this.output_handler.setup(properties);
     if (properties.hasOwnProperty("message_events")) {
       this.setup_messages(properties.message_events);
     }
@@ -319,7 +302,9 @@
     });
   }
 
-  function promise_rejects(test, expected, promise, description) {}
+  function promise_rejects(test, expected, promise, description) {
+    return promise;
+  }
 
   /**
    * This constructor helper allows DOM events to be handled using Promises,
@@ -334,15 +319,55 @@
 
   expose(EventWatcher, "EventWatcher");
 
-  function setup(func_or_properties, maybe_properties) {}
+  function setup(func_or_properties, maybe_properties) {
+    var func = null;
+    var properties = {};
+    if (arguments.length === 2) {
+      func = func_or_properties;
+      properties = maybe_properties;
+    } else if (func_or_properties instanceof Function) {
+      func = func_or_properties;
+    } else {
+      properties = func_or_properties;
+    }
+    tests.setup(func, properties);
+    test_environment.on_new_harness_properties(properties);
+  }
 
-  function done() {}
+  function done() {
+    if (tests.tests.length === 0) {
+      tests.set_file_is_test();
+    }
+    if (tests.file_is_test) {
+      tests.tests[0].done();
+    }
+    tests.end_wait();
+  }
 
-  function generate_tests(func, args, properties) {}
+  function generate_tests(func, args, properties) {
+    forEach(args, function(x, i) {
+      var name = x[0];
+      test(
+        function() {
+          func.apply(this, x.slice(1));
+        },
+        name,
+        Array.isArray(properties) ? properties[i] : properties
+      );
+    });
+  }
 
-  function on_event(object, event, callback) {}
+  function on_event(object, event, callback) {
+    object.addEventListener(event, callback, false);
+  }
 
-  function step_timeout(f, t) {}
+  function step_timeout(f, t) {
+    var outer_this = this;
+    var args = Array.prototype.slice.call(arguments, 2);
+    return setTimeout(function() {
+      f.apply(outer_this, args);
+    }, t * tests.timeout_multiplier);
+  }
 
   expose(test, "test");
   expose(async_test, "async_test");
