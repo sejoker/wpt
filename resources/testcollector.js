@@ -65,7 +65,7 @@
         function(test) {
           this_obj._dispatch("test_state_callback", [test], {
             type: "test_state",
-            test: test.structured_clone()
+            test: {}
           });
         }
       ],
@@ -73,10 +73,9 @@
         add_result_callback,
         remove_result_callback,
         function(test) {
-          this_obj.output_handler.show_status();
           this_obj._dispatch("result_callback", [test], {
             type: "result",
-            test: test.structured_clone()
+            test: {}
           });
         }
       ],
@@ -84,13 +83,10 @@
         add_completion_callback,
         remove_completion_callback,
         function(tests, harness_status) {
-          var cloned_tests = map(tests, function(test) {
-            return test.structured_clone();
-          });
           this_obj._dispatch("completion_callback", [tests, harness_status], {
             type: "complete",
-            tests: cloned_tests,
-            status: harness_status.structured_clone()
+            tests: [],
+            status: ""
           });
         }
       ]
@@ -174,27 +170,28 @@
   };
 
   WindowTestEnvironment.prototype.on_tests_ready = function() {
-    var output = new Output();
-    this.output_handler = output;
-    var this_obj = this;
-    add_start_callback(function(properties) {
-      this_obj.output_handler.init(properties);
-    });
-    add_test_state_callback(function(test) {
-      this_obj.output_handler.show_status();
-    });
-    add_result_callback(function(test) {
-      this_obj.output_handler.show_status();
-    });
-    add_completion_callback(function(tests, harness_status) {
-      this_obj.output_handler.show_results(tests, harness_status);
-    });
+    //var output = new Output();
+    // this.output_handler = output;
+    // var this_obj = this;
+    // add_start_callback(function(properties) {
+    //   this_obj.output_handler.init(properties);
+    // });
+    // add_test_state_callback(function(test) {
+    //   this_obj.output_handler.show_status();
+    // });
+    // add_result_callback(function(test) {
+    //   this_obj.output_handler.show_status();
+    // });
+    // add_completion_callback(function(tests, harness_status) {
+    //   this_obj.output_handler.show_results(tests, harness_status);
+    // });
     this.setup_messages(settings.message_events);
     add_completion_callback(function() {
       console.log(
         `All tests actual values:`,
         format_value(tests.tests_actual_results)
       );
+      //console.warn(tests.status.message);
     });
   };
 
@@ -261,11 +258,66 @@
    * API functions
    */
 
-  function test(func, name, properties) {}
+  function test(func, name, properties) {
+    var test_name = name ? name : test_environment.next_default_test_name();
+    properties = properties ? properties : {};
+    var test_obj = new Test(test_name, properties);
+    test_obj.step(func, test_obj, test_obj);
+    if (test_obj.phase === test_obj.phases.STARTED) {
+      test_obj.done();
+    }
+  }
 
-  function async_test(func, name, properties) {}
+  function async_test(func, name, properties) {
+    if (typeof func !== "function") {
+      properties = name;
+      name = func;
+      func = null;
+    }
+    var test_name = name ? name : test_environment.next_default_test_name();
+    properties = properties ? properties : {};
+    var test_obj = new Test(test_name, properties);
+    if (func) {
+      test_obj.step(func, test_obj, test_obj);
+    }
+    return test_obj;
+  }
 
-  function promise_test(func, name, properties) {}
+  function promise_test(func, name, properties) {
+    var test = async_test(name, properties);
+    // If there is no promise tests queue make one.
+    if (!tests.promise_tests) {
+      tests.promise_tests = Promise.resolve();
+    }
+    tests.promise_tests = tests.promise_tests.then(function() {
+      var donePromise = new Promise(function(resolve) {
+        test._add_cleanup(resolve);
+      });
+      var promise = test.step(func, test, test);
+      test.step(function() {
+        assert_not_equals(promise, undefined);
+      });
+      Promise.resolve(promise)
+        .then(function() {
+          test.done();
+        })
+        .catch(
+          test.step_func(function(value) {
+            if (value instanceof AssertionError) {
+              throw value;
+            }
+            assert(
+              false,
+              "promise_test",
+              null,
+              "Unhandled rejection with value: ${value}",
+              { value: value }
+            );
+          })
+        );
+      return donePromise;
+    });
+  }
 
   function promise_rejects(test, expected, promise, description) {}
 
@@ -641,6 +693,288 @@
   }
 
   expose(assert_any, "assert_any");
+
+  function Test(name, properties) {
+    if (tests.file_is_test && tests.tests.length) {
+      throw new Error("Tried to create a test with file_is_test");
+    }
+    this.name = name;
+
+    this.phase =
+      tests.phase === tests.phases.ABORTED
+        ? this.phases.COMPLETE
+        : this.phases.INITIAL;
+
+    this.status = this.NOTRUN;
+    this.timeout_id = null;
+    this.index = null;
+
+    this.properties = properties;
+    var timeout = properties.timeout
+      ? properties.timeout
+      : settings.test_timeout;
+    if (timeout !== null) {
+      this.timeout_length = timeout * tests.timeout_multiplier;
+    } else {
+      this.timeout_length = null;
+    }
+
+    this.message = null;
+    this.stack = null;
+
+    this.steps = [];
+
+    this.cleanup_callbacks = [];
+    this._user_defined_cleanup_count = 0;
+
+    tests.push(this);
+  }
+
+  Test.statuses = {
+    PASS: 0,
+    FAIL: 1,
+    TIMEOUT: 2,
+    NOTRUN: 3
+  };
+
+  Test.prototype = merge({}, Test.statuses);
+
+  Test.prototype.phases = {
+    INITIAL: 0,
+    STARTED: 1,
+    HAS_RESULT: 2,
+    COMPLETE: 3
+  };
+
+  Test.prototype.structured_clone = function() {
+    if (!this._structured_clone) {
+      var msg = this.message;
+      msg = msg ? String(msg) : msg;
+      this._structured_clone = merge(
+        {
+          name: String(this.name),
+          properties: merge({}, this.properties),
+          phases: merge({}, this.phases)
+        },
+        Test.statuses
+      );
+    }
+    this._structured_clone.status = this.status;
+    this._structured_clone.message = this.message;
+    this._structured_clone.stack = this.stack;
+    this._structured_clone.index = this.index;
+    this._structured_clone.phase = this.phase;
+    return this._structured_clone;
+  };
+
+  Test.prototype.step = function(func, this_obj) {
+    if (this.phase > this.phases.STARTED) {
+      return;
+    }
+    this.phase = this.phases.STARTED;
+    //If we don't get a result before the harness times out that will be a test timout
+    this.set_status(this.TIMEOUT, "Test timed out");
+
+    tests.started = true;
+    tests.notify_test_state(this);
+
+    if (this.timeout_id === null) {
+      this.set_timeout();
+    }
+
+    this.steps.push(func);
+
+    if (arguments.length === 1) {
+      this_obj = this;
+    }
+
+    try {
+      return func.apply(this_obj, Array.prototype.slice.call(arguments, 2));
+    } catch (e) {
+      if (this.phase >= this.phases.HAS_RESULT) {
+        return;
+      }
+      var message = String(typeof e === "object" && e !== null ? e.message : e);
+      var stack = e.stack ? e.stack : null;
+
+      this.set_status(this.FAIL, message, stack);
+      this.phase = this.phases.HAS_RESULT;
+      this.done();
+    }
+  };
+
+  Test.prototype.step_func = function(func, this_obj) {
+    var test_this = this;
+
+    if (arguments.length === 1) {
+      this_obj = test_this;
+    }
+
+    return function() {
+      return test_this.step.apply(
+        test_this,
+        [func, this_obj].concat(Array.prototype.slice.call(arguments))
+      );
+    };
+  };
+
+  Test.prototype.step_func_done = function(func, this_obj) {
+    var test_this = this;
+
+    if (arguments.length === 1) {
+      this_obj = test_this;
+    }
+
+    return function() {
+      if (func) {
+        test_this.step.apply(
+          test_this,
+          [func, this_obj].concat(Array.prototype.slice.call(arguments))
+        );
+      }
+      test_this.done();
+    };
+  };
+
+  Test.prototype.unreached_func = function(description) {
+    return this.step_func(function() {
+      assert_unreached(description);
+    });
+  };
+
+  Test.prototype.step_timeout = function(f, timeout) {
+    var test_this = this;
+    var args = Array.prototype.slice.call(arguments, 2);
+    return setTimeout(
+      this.step_func(function() {
+        return f.apply(test_this, args);
+      }),
+      timeout * tests.timeout_multiplier
+    );
+  };
+
+  /*
+     * Private method for registering cleanup functions. `testharness.js`
+     * internals should use this method instead of the public `add_cleanup`
+     * method in order to hide implementation details from the harness status
+     * message in the case errors.
+     */
+  Test.prototype._add_cleanup = function(callback) {
+    this.cleanup_callbacks.push(callback);
+  };
+
+  /*
+     * Schedule a function to be run after the test result is known, regardless
+     * of passing or failing state. The behavior of this function will not
+     * influence the result of the test, but if an exception is thrown, the
+     * test harness will report an error.
+     */
+  Test.prototype.add_cleanup = function(callback) {
+    this._user_defined_cleanup_count += 1;
+    this._add_cleanup(callback);
+  };
+
+  Test.prototype.set_timeout = function() {
+    if (this.timeout_length !== null) {
+      var this_obj = this;
+      this.timeout_id = setTimeout(function() {
+        this_obj.timeout();
+      }, this.timeout_length);
+    }
+  };
+
+  Test.prototype.set_status = function(status, message, stack) {
+    this.status = status;
+    this.message = message;
+    this.stack = stack ? stack : null;
+  };
+
+  Test.prototype.timeout = function() {
+    this.timeout_id = null;
+    this.set_status(this.TIMEOUT, "Test timed out");
+    this.phase = this.phases.HAS_RESULT;
+    this.done();
+  };
+
+  Test.prototype.force_timeout = Test.prototype.timeout;
+
+  Test.prototype.done = function() {
+    if (this.phase == this.phases.COMPLETE) {
+      return;
+    }
+
+    if (this.phase <= this.phases.STARTED) {
+      this.set_status(this.PASS, null);
+    }
+
+    this.phase = this.phases.COMPLETE;
+
+    if (global_scope.clearTimeout) {
+      clearTimeout(this.timeout_id);
+    }
+    tests.result(this);
+    this.cleanup();
+  };
+
+  /*
+     * Invoke all specified cleanup functions. If one or more produce an error,
+     * the context is in an unpredictable state, so all further testing should
+     * be cancelled.
+     */
+  Test.prototype.cleanup = function() {
+    var error_count = 0;
+    var total;
+
+    forEach(this.cleanup_callbacks, function(cleanup_callback) {
+      try {
+        cleanup_callback();
+      } catch (e) {
+        // Set test phase immediately so that tests declared
+        // within subsequent cleanup functions are not run.
+        tests.phase = tests.phases.ABORTED;
+        error_count += 1;
+      }
+    });
+
+    if (error_count > 0) {
+      total = this._user_defined_cleanup_count;
+      tests.status.status = tests.status.ERROR;
+      tests.status.message =
+        "Test named '" +
+        this.name +
+        "' specified " +
+        total +
+        " 'cleanup' function" +
+        (total > 1 ? "s" : "") +
+        ", and " +
+        error_count +
+        " failed.";
+      tests.status.stack = null;
+    }
+  };
+
+  function merge(a, b) {
+    var rv = {};
+    var p;
+    for (p in a) {
+      rv[p] = a[p];
+    }
+    for (p in b) {
+      rv[p] = b[p];
+    }
+    return rv;
+  }
+
+  /*
+     * Utility funcions
+     */
+  function assert(
+    expected_true,
+    function_name,
+    description,
+    error,
+    substitutions
+  ) {}
 
   function expose(object, name) {
     var components = name.split(".");
@@ -1038,8 +1372,42 @@
     remove(tests.all_done_callbacks, callback);
   }
 
+  function supports_post_message(w) {
+    var supports;
+    var type;
+    // Given IE implements postMessage across nested iframes but not across
+    // windows or tabs, you can't infer cross-origin communication from the presence
+    // of postMessage on the current window object only.
+    //
+    // Touching the postMessage prop on a window can throw if the window is
+    // not from the same origin AND post message is not supported in that
+    // browser. So just doing an existence test here won't do, you also need
+    // to wrap it in a try..cacth block.
+    try {
+      type = typeof w.postMessage;
+      if (type === "function") {
+        supports = true;
+      } else if (type === "object") {
+        // IE8 supports postMessage, but implements it as a host object which
+        // returns "object" as its `typeof`.
+        supports = true;
+      } else {
+        // This is the case where postMessage isn't supported AND accessing a
+        // window property across origins does NOT throw (e.g. old Safari browser).
+        supports = false;
+      }
+    } catch (e) {
+      // This is the case where postMessage isn't supported AND accessing a
+      // window property across origins throws (e.g. old Firefox browser).
+      supports = false;
+    }
+    return supports;
+  }
+
   /**
    * Setup globals
    */
   var tests = new Tests();
+
+  test_environment.on_tests_ready();
 })(this);
